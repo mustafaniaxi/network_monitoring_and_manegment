@@ -1,0 +1,56 @@
+# NetMon production-style stack: PostgreSQL + API/monitoring engine + web UI.
+#
+#   cp .env.example .env   # then set NETMON_SECRET_KEY and passwords
+#   docker compose up -d --build
+#   open http://localhost:8080
+#
+# Demo with synthetic data:  docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+# Virtual lab (SNMP agents): docker compose -f docker-compose.yml -f lab/docker-compose.lab.yml up -d
+
+name: netmon
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-netmon}
+      POSTGRES_USER: ${POSTGRES_USER:-netmon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    image: netmon-backend:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NETMON_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-netmon}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-netmon}
+      NETMON_CORS_ORIGINS: ${NETMON_PUBLIC_URL:-http://localhost:8080}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Allow unprivileged ICMP echo sockets for the non-root container user.
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
+    expose:
+      - "8000"
+
+  frontend:
+    build: ./frontend
+    image: netmon-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${NETMON_HTTP_PORT:-8080}:80"
+
+volumes:
+  pgdata:

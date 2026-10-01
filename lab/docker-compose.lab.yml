@@ -1,0 +1,76 @@
+# Virtual laboratory: a small containerised network of SNMP-enabled "devices" that NetMon
+# monitors for real (ICMP + TCP + SNMP) - no physical equipment required.
+#
+#   docker compose -f docker-compose.yml -f lab/docker-compose.lab.yml up -d --build
+#   python lab/setup_lab.py --password '<admin password>'      # registers devices + links
+#   python research/measure_detection.py --container netmon-lab-db-1 --device "Lab DB Server"
+#
+# Addressing (172.30.0.0/24):
+#   .10 lab-router   .11 lab-switch   .20 lab-web (tcp/80)   .21 lab-db (tcp/5432)
+#   .50 lab-client (generates traffic towards lab-web)
+
+x-agent: &agent
+  build: ./lab/agent
+  image: netmon-lab-agent:latest
+  restart: unless-stopped
+
+services:
+  backend:
+    networks:
+      default: {}
+      lab: {}
+
+  lab-router:
+    <<: *agent
+    hostname: lab-router
+    environment:
+      SYS_DESCR: "Linux lab-router - virtual edge router (NetMon lab)"
+      SYS_LOCATION: "Lab rack A"
+    networks:
+      lab: { ipv4_address: 172.30.0.10 }
+
+  lab-switch:
+    <<: *agent
+    hostname: lab-switch
+    environment:
+      SYS_DESCR: "Linux lab-switch - virtual access switch (NetMon lab)"
+      SYS_LOCATION: "Lab rack A"
+    networks:
+      lab: { ipv4_address: 172.30.0.11 }
+
+  lab-web:
+    <<: *agent
+    hostname: lab-web
+    environment:
+      SYS_DESCR: "Linux lab-web 6.8 x86_64 - web server (NetMon lab)"
+      SERVICE_PORT: "80"
+      SNMPV3_USER: netmonv3
+      SNMPV3_AUTH_KEY: lab-auth-pass
+      SNMPV3_PRIV_KEY: lab-priv-pass
+    networks:
+      lab: { ipv4_address: 172.30.0.20 }
+
+  lab-db:
+    <<: *agent
+    hostname: lab-db
+    environment:
+      SYS_DESCR: "Linux lab-db 6.8 x86_64 - database server (NetMon lab)"
+      SERVICE_PORT: "5432"
+    networks:
+      lab: { ipv4_address: 172.30.0.21 }
+
+  lab-client:
+    <<: *agent
+    hostname: lab-client
+    environment:
+      SYS_DESCR: "Linux lab-client - workstation (NetMon lab)"
+      TRAFFIC_TARGET: "http://172.30.0.20/payload.bin"
+    networks:
+      lab: { ipv4_address: 172.30.0.50 }
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

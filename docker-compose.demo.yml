@@ -1,0 +1,9 @@
+# Demo overlay: simulated network with a week of synthetic history - no lab equipment needed.
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+services:
+  backend:
+    environment:
+      NETMON_MONITOR_MODE: simulation
+      NETMON_POLL_INTERVAL_SECONDS: "15"
+      NETMON_SEED_DEMO: "1"
+      NETMON_SEED_HISTORY_HOURS: "168"

@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the stack with ...
+        2. Add a device ...
+        3. See error ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NetMon version
+      placeholder: "1.0.0 (Settings page)"
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options: [Docker Compose, Manual (uv + npm), Other]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell

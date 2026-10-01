@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netmon
+          POSTGRES_PASSWORD: netmon
+          POSTGRES_DB: netmon_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U netmon -d netmon_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install net-snmp agent (SNMP integration tests)
+        working-directory: .
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends snmpd
+          sudo systemctl stop snmpd || true
+      - run: uv sync --frozen
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Type-check
+        run: uv run mypy netmon
+      - name: Tests (SQLite)
+        run: uv run pytest --cov --cov-report=term --cov-report=xml
+      - name: Tests (PostgreSQL)
+        env:
+          NETMON_TEST_DATABASE_URL: postgresql+asyncpg://netmon:netmon@localhost:5432/netmon_test
+        run: uv run pytest -q -m "not snmp"
+      - name: Migrations apply cleanly and match the models
+        env:
+          NETMON_DATABASE_URL: postgresql+asyncpg://netmon:netmon@localhost:5432/netmon_test
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  scripts:
+    name: Lab & research scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff check --config backend/pyproject.toml research lab
+      - run: python -m py_compile research/*.py lab/setup_lab.py
+
+  docker:
+    name: Docker images & stack smoke test
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          tags: netmon-backend:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          tags: netmon-frontend:latest
+          load: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+      - name: Build lab agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: lab/agent
+          tags: netmon-lab-agent:latest
+          load: true
+      - name: Validate compose files
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml -f docker-compose.demo.yml config -q
+          docker compose -f docker-compose.yml -f lab/docker-compose.lab.yml config -q
+      - name: Start demo stack
+        run: |
+          sed -i 's/^NETMON_SECRET_KEY=.*/NETMON_SECRET_KEY=ci-secret-key-that-is-definitely-long-enough/' .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-db-password/' .env
+          sed -i 's/^NETMON_FIRST_ADMIN_PASSWORD=.*/NETMON_FIRST_ADMIN_PASSWORD=ci-admin-password/' .env
+          docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --no-build --wait --wait-timeout 180
+      - name: Smoke test through the web container
+        run: |
+          curl -fsS http://localhost:8080/health/ready
+          TOKEN=$(curl -fsS -X POST http://localhost:8080/api/v1/auth/login \
+            -d "username=admin@example.com&password=ci-admin-password" | jq -r .access_token)
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/dashboard/summary | jq -e '.devices.total == 9'
+          curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.demo.yml logs --tail 200
