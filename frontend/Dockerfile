@@ -8,7 +8,7 @@ COPY . .
 RUN npm run build
 
 # ---------------------------------------------------------------- runtime stage
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 LABEL org.opencontainers.image.title="netmon-frontend" \
       org.opencontainers.image.description="NetMon web dashboard" \
       org.opencontainers.image.licenses="MIT"
