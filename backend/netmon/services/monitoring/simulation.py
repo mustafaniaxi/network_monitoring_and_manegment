@@ -27,7 +27,7 @@ from netmon.services.monitoring.types import (
     SnmpSnapshot,
 )
 
-_LATENCY_RANGE: dict[DeviceType, tuple[float, float]] = {
+LATENCY_RANGE: dict[DeviceType, tuple[float, float]] = {
     DeviceType.ROUTER: (0.8, 3.0),
     DeviceType.SWITCH: (0.4, 1.5),
     DeviceType.FIREWALL: (0.8, 2.5),
@@ -39,13 +39,13 @@ _LATENCY_RANGE: dict[DeviceType, tuple[float, float]] = {
     DeviceType.OTHER: (1.0, 10.0),
 }
 
-_CPU_BASE: dict[DeviceType, float] = {
+CPU_BASE: dict[DeviceType, float] = {
     DeviceType.ROUTER: 18, DeviceType.SWITCH: 12, DeviceType.FIREWALL: 25, DeviceType.SERVER: 35,
     DeviceType.PC: 20, DeviceType.ACCESS_POINT: 15, DeviceType.PRINTER: 5, DeviceType.OTHER: 15,
 }  # fmt: skip
 
 # (name, speed Mbps, typical utilisation at peak)
-_INTERFACES: dict[DeviceType, list[tuple[str, int, float]]] = {
+INTERFACES: dict[DeviceType, list[tuple[str, int, float]]] = {
     DeviceType.ROUTER: [("GigabitEthernet0/0", 100, 0.45), ("GigabitEthernet0/1", 1000, 0.08)],
     DeviceType.FIREWALL: [("wan0", 100, 0.40), ("lan0", 1000, 0.06)],
     DeviceType.SWITCH: [(f"GigabitEthernet1/0/{i}", 1000, 0.04 + 0.02 * (i % 3))
@@ -57,7 +57,7 @@ _INTERFACES: dict[DeviceType, list[tuple[str, int, float]]] = {
     DeviceType.OTHER: [("eth0", 100, 0.05)],
 }  # fmt: skip
 
-_SYS_DESCR: dict[DeviceType, str] = {
+SYS_DESCR: dict[DeviceType, str] = {
     DeviceType.ROUTER: "Cisco IOS Software, C2900 Software (C2900-UNIVERSALK9-M), Version 15.7",
     DeviceType.SWITCH: "Cisco IOS Software, C2960X Software (C2960X-UNIVERSALK9-M), Version 15.2",
     DeviceType.FIREWALL: "pfSense 2.7.2-RELEASE amd64 FreeBSD 14.0",
@@ -70,7 +70,7 @@ _SYS_DESCR: dict[DeviceType, str] = {
 }
 
 
-def _stable_seed(*parts: object) -> int:
+def stable_seed(*parts: object) -> int:
     digest = hashlib.sha256("|".join(map(str, parts)).encode()).digest()
     return int.from_bytes(digest[:8], "big")
 
@@ -117,19 +117,19 @@ class SimulatedBackend:
     def _state(self, target: DeviceTarget) -> _DeviceState:
         state = self._devices.get(target.id)
         if state is None or state.device_type != target.device_type:
-            rng = random.Random(_stable_seed(self._seed, target.id, target.name))
-            lo, hi = _LATENCY_RANGE.get(target.device_type, (1.0, 10.0))
+            rng = random.Random(stable_seed(self._seed, target.id, target.name))
+            lo, hi = LATENCY_RANGE.get(target.device_type, (1.0, 10.0))
             lowered = target.name.lower()
             state = _DeviceState(
                 rng=rng,
                 device_type=target.device_type,
                 flaky="database" in lowered or lowered.startswith("db"),
                 base_latency=rng.uniform(lo, hi),
-                cpu=_CPU_BASE.get(target.device_type, 15) * rng.uniform(0.7, 1.3),
+                cpu=CPU_BASE.get(target.device_type, 15) * rng.uniform(0.7, 1.3),
                 memory=rng.uniform(35, 70),
             )
             for idx, (name, speed, peak) in enumerate(
-                _INTERFACES.get(target.device_type, []), start=1
+                INTERFACES.get(target.device_type, []), start=1
             ):
                 state.interfaces.append(
                     _IfaceState(
@@ -189,7 +189,7 @@ class SimulatedBackend:
         s.last_poll = now_mono
         load = diurnal_factor(datetime.now())
 
-        base_cpu = _CPU_BASE.get(target.device_type, 15)
+        base_cpu = CPU_BASE.get(target.device_type, 15)
         target_cpu = base_cpu * (0.6 + 0.8 * load)
         s.cpu += (target_cpu - s.cpu) * 0.3 + s.rng.gauss(0, 2.5)
         cpu = s.rng.uniform(92, 99) if s.cpu_spike_left > 0 else s.cpu
@@ -211,7 +211,7 @@ class SimulatedBackend:
 
         return SnmpSnapshot(
             sys_name=target.name.lower().replace(" ", "-"),
-            sys_descr=_SYS_DESCR.get(target.device_type, "Simulated device"),
+            sys_descr=SYS_DESCR.get(target.device_type, "Simulated device"),
             sys_object_id="1.3.6.1.4.1.8072.3.2.10",
             uptime_seconds=int(time.time() - s.boot_time),
             cpu_percent=round(min(100.0, max(0.5, cpu)), 2),
@@ -225,7 +225,7 @@ class SimulatedBackend:
             last_octet = int(ipaddress.ip_address(host).packed[-1])
         except ValueError:
             return ProbeResult.down("invalid address")
-        rng = random.Random(_stable_seed(self._seed, host))
+        rng = random.Random(stable_seed(self._seed, host))
         alive = last_octet in (1, 2, 3, 5, 10, 11, 12, 20, 250) or rng.random() < 0.08
         if not alive:
             return ProbeResult.down("no reply", packets_sent=1)
@@ -240,7 +240,7 @@ class SimulatedBackend:
         if guess is None:
             guess = DeviceType.SERVER if last_octet < 50 else DeviceType.PC
         return {
-            "sys_descr": _SYS_DESCR[guess],
+            "sys_descr": SYS_DESCR[guess],
             "sys_object_id": "1.3.6.1.4.1.8072.3.2.10",
             "uptime_seconds": 86400 * (last_octet % 30 + 1),
             "sys_name": f"{guess.value.replace('_', '-')}-{last_octet}",

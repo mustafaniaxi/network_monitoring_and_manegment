@@ -29,6 +29,7 @@ from netmon.core.security import hash_password
 from netmon.db.session import create_engine, create_session_factory
 from netmon.models import User, UserRole
 from netmon.services.bootstrap import ensure_default_rules, ensure_first_admin, seed_demo
+from netmon.services.demo import backfill_history
 
 BASE_DIR = Path(__file__).resolve().parent
 R = TypeVar("R")
@@ -65,6 +66,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         admin = await ensure_first_admin(session, settings)
         rules = await ensure_default_rules(session)
         devices = await seed_demo(session) if args.demo else 0
+        if devices and args.history_hours:
+            await backfill_history(session, args.history_hours)
         return admin, rules, devices
 
     admin, rules, devices = asyncio.run(_with_session(run))
@@ -97,13 +100,17 @@ def cmd_create_admin(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_seed_demo(_args: argparse.Namespace) -> int:
-    async def run(session: AsyncSession, _settings: Settings) -> int:
+def cmd_seed_demo(args: argparse.Namespace) -> int:
+    async def run(session: AsyncSession, _settings: Settings) -> tuple[int, int]:
         await ensure_default_rules(session)
-        return await seed_demo(session)
+        added = await seed_demo(session)
+        samples = await backfill_history(session, args.history_hours) if args.history_hours else 0
+        return added, samples
 
-    added = asyncio.run(_with_session(run))
-    print(f"demo devices added: {added}" if added else "devices already exist - nothing seeded")
+    added, samples = asyncio.run(_with_session(run))
+    print(f"demo devices added: {added}" if added else "devices already exist - none added")
+    if samples:
+        print(f"synthetic history: {samples} samples over {args.history_hours} h")
     return 0
 
 
@@ -133,6 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("init", help="migrate, create first admin and default alert rules")
     p.add_argument("--demo", action="store_true", help="also seed the demo network")
+    p.add_argument(
+        "--history-hours",
+        type=int,
+        default=0,
+        help="with --demo: back-fill this many hours of synthetic history",
+    )
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("create-admin", help="create or reset an administrator account")
@@ -142,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_create_admin)
 
     p = sub.add_parser("seed-demo", help="insert the demo office network")
+    p.add_argument(
+        "--history-hours",
+        type=int,
+        default=0,
+        help="back-fill this many hours of synthetic measurements (e.g. 168)",
+    )
     p.set_defaults(func=cmd_seed_demo)
 
     p = sub.add_parser("serve", help="run the API server")

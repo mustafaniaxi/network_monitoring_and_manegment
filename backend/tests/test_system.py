@@ -111,3 +111,22 @@ def test_diurnal_factor_bounds():
     assert diurnal_factor(datetime(2026, 3, 4, 3, 0)) == 0.15
     assert diurnal_factor(datetime(2026, 3, 4, 13, 0)) > 0.9
     assert diurnal_factor(datetime(2026, 3, 7, 13, 0)) < 0.6  # Saturday
+
+
+async def test_demo_seed_and_history_backfill(session):
+    from sqlalchemy import func, select
+
+    from netmon.models import Alert, Device, Link, MetricSample
+    from netmon.services.bootstrap import seed_demo
+    from netmon.services.demo import backfill_history
+
+    assert await seed_demo(session) == 9
+    assert await seed_demo(session) == 0  # idempotent
+    assert await session.scalar(select(func.count()).select_from(Link)) == 8
+    samples = await backfill_history(session, hours=48)
+    devices = await session.scalar(select(func.count()).select_from(Device))
+    assert samples == devices * 48 * 12
+    assert await session.scalar(select(func.count()).select_from(MetricSample)) == samples
+    outages = (await session.scalars(select(Alert))).all()
+    assert outages, "the flaky database server should have produced outages"
+    assert all(a.resolved_at and a.first_breach_at for a in outages)
