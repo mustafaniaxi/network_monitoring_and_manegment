@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------- build stage
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 RUN pip install --no-cache-dir "uv>=0.8,<0.9"
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
 # ---------------------------------------------------------------- runtime stage
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 LABEL org.opencontainers.image.title="netmon-backend" \
       org.opencontainers.image.description="NetMon API and monitoring engine" \
       org.opencontainers.image.licenses="MIT"
