@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+
+# Local data & secrets
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+research/results/
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
